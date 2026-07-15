@@ -2,32 +2,44 @@
 """
 element_highlighter.py — 影刀 RPA 元素高亮标注工具
 ==============================================
-浮层 div，不侵入页面。getBoundingClientRect 拿视口坐标（position:fixed 需要），
-带重试机制防布局未完成。
+调试 RPA 流程时，把元素用彩色方框实时标出来，确认选择器是否抓对、流程跑到哪一步。
 
-时序：标旧 → 画新 → 淡旧。
+特性：
+- 不侵入页面：浮层 div（position:fixed, pointer-events:none），不修改目标元素。
+- 滚动跟随：scroll/resize 实时贴着元素移动。
+- 先画新再淡旧：新方框先出现，旧方框随后渐隐退出。
+- 布局容错：getBoundingClientRect 返回 0×0 时自动重试三次（16/60/120ms）。
+- 随机配色：每次标注用高饱和随机色，区分不同批次。
+- 自动标注：流程开头调 enable()，hook 影刀指令，自动标注返回的元素。
 
-调用：
-    from element_highlighter import mark, clear_all
-    mark(web_browser, elems)
-    mark(web_browser, one_elem)
-    mark(web_browser, elems, duration=5, fade=1)
+两种用法：
+    1. 手动标注
+       from element_highlighter import mark, clear_all
+       mark(web_browser, elems)
+       mark(web_browser, one_elem)
+
+    2. 自动标注（推荐）
+       from element_highlighter import enable, disable
+       enable()                # 流程开头调一次，自动标注所有指令返回的元素
+       ... 正常写流程 ...
+       disable()               # 不想标注了就关掉
+
+依赖：影刀 xbot 的 WebBrowser / WebElement（ChromiumElement），元素需支持 execute_javascript。
 """
 
 import json
 import random
+import colorsys
 
-# 版本标记：random-color-test（临时测试随机配色，确认效果后改回固定色）
 GROUP_COLOR = "#17A0AD"
 SINGLE_COLOR = "#2D9CDB"
 
 
 def _random_color():
-    """生成高饱和随机 hex 色（避开太暗/太浅）。"""
+    """生成高饱和随机 hex 色，每次标注用不同颜色区分批次。"""
     h = random.randint(0, 359)
     s = random.randint(65, 90)
     l = random.randint(45, 60)
-    import colorsys
     r, g, b = colorsys.hls_to_rgb(h / 360, l / 100, s / 100)
     return "#{:02X}{:02X}{:02X}".format(int(r * 255), int(g * 255), int(b * 255))
 
@@ -141,7 +153,7 @@ def mark(web_browser, elements, duration=3.0, fade=0.6):
     if not elems: return
     anchor = elems[0]
     _ensure_layer(anchor)
-    color = _random_color()  # 测试用随机色，确认效果后改回 SINGLE/GROUP_COLOR
+    color = _random_color()
 
     # 1) 淡旧框：清空 _rpaBoxes + animate 渐隐（IIFE 防闭包 bug）
     try:
@@ -174,5 +186,156 @@ def main(web_page, web_elements, duration=3.0, fade=0.6):
     mark(web_page, web_elements, duration=duration, fade=fade)
 
 
+# ---------- 自动标注：hook process.run ----------
+_enabled = False
+_orig_run = None
+
+
+def _is_webelement(obj):
+    """判断对象是不是 WebElement（ChromiumElement 等）。"""
+    if obj is None:
+        return False
+    cls_name = type(obj).__name__
+    return cls_name in ("ChromiumElement", "WebElement", "CefElement", "EdgeElement",
+                        "FirefoxElement", "IEElement")
+
+
+def _is_webbrowser(obj):
+    """判断对象是不是 WebBrowser（ChromiumBrowser 等）。"""
+    if obj is None:
+        return False
+    cls_name = type(obj).__name__
+    return cls_name in ("ChromiumBrowser", "WebBrowser", "CefBrowser", "EdgeBrowser",
+                        "FirefoxBrowser", "IEBrowser")
+
+
+def _extract_elements(result):
+    """从 process.run 的返回值里提取 WebElement。"""
+    if _is_webelement(result):
+        return [result]
+    if isinstance(result, (list, tuple)):
+        elems = [e for e in result if _is_webelement(e)]
+        return elems if elems else []
+    return []
+
+
+def enable(web_page=None, duration=3.0, fade=0.6):
+    """在流程开头调一次，hook process.run，自动标注所有指令返回的元素。
+
+    web_page 可以不传——流程里第一个"获取已打开的网页对象"指令的返回值
+    会被自动捕获作为 web_page。
+
+    :param web_page: 影刀网页对象（可选，不传则自动从指令返回值获取）
+    :param duration: 方框保持秒数（默认 3s）
+    :param fade:     渐隐秒数（默认 0.6s）
+    """
+    global _enabled, _orig_run
+    if _enabled:
+        return
+    try:
+        import xbot_visual.process as _p
+    except Exception:
+        return
+    _orig_run = _p.run
+    _browser_ref = [web_page]
+
+    def _hooked(**kw):
+        result = _orig_run(**kw)
+        try:
+            # 每次指令动态拿当前 browser（支持多网页切换）：
+            #   ① 指令参数里的 browser（最准——当前指令操作哪个网页就是哪个）
+            #   ② 返回值是 WebBrowser（"获取已打开的网页对象"指令）→ 更新缓存
+            #   ③ 元素自己作 anchor（兜底）
+            current_browser = kw.get("browser") or _browser_ref[0]
+            if _is_webbrowser(result):
+                _browser_ref[0] = result
+                if current_browser is None:
+                    current_browser = result
+            elif isinstance(result, (list, tuple)):
+                for r in result:
+                    if _is_webbrowser(r):
+                        _browser_ref[0] = r
+                        if current_browser is None:
+                            current_browser = r
+                        break
+            elems = _extract_elements(result)
+            if elems:
+                mark(current_browser or elems[0], elems, duration=duration, fade=fade)
+        except Exception:
+            pass
+        return result
+
+    _p.run = _hooked
+
+    # 同时 hook xbot_visual.web.element 下的函数（系统自带指令走这条路，不走 process.run）
+    _hook_web_element(duration, fade)
+
+    _enabled = True
+
+
+# 保存 web.element 的原始函数
+_web_elem_origs = {}
+
+
+def _hook_web_element(duration, fade):
+    """hook xbot_visual.web.element 下返回元素的函数。"""
+    try:
+        import xbot_visual.web.element as _we
+    except Exception:
+        return
+    # 这些函数返回 WebElement 或 [WebElement]
+    _targets = [
+        "get_element",           # 获取元素对象(web)
+        "get_all_elements",      # 获取相似元素列表(web)
+        "get_associated_elements",  # 获取关联元素(web)
+    ]
+    for name in _targets:
+        orig = getattr(_we, name, None)
+        if orig is None or name in _web_elem_origs:
+            continue
+        _web_elem_origs[name] = orig
+
+        def make_wrapper(fn_name, fn):
+            def wrapped(**kw):
+                result = fn(**kw)
+                try:
+                    browser = kw.get("browser")
+                    elems = _extract_elements(result)
+                    if elems:
+                        mark(browser or elems[0], elems, duration=duration, fade=fade)
+                except Exception:
+                    pass
+                return result
+            return wrapped
+
+        setattr(_we, name, make_wrapper(name, orig))
+
+
+def _unhook_web_element():
+    """恢复 web.element 的原始函数。"""
+    try:
+        import xbot_visual.web.element as _we
+    except Exception:
+        return
+    for name, orig in _web_elem_origs.items():
+        setattr(_we, name, orig)
+    _web_elem_origs.clear()
+
+
+def disable():
+    """关闭自动标注，恢复原始 process.run 和 web.element。"""
+    global _enabled, _orig_run
+    if not _enabled:
+        return
+    try:
+        import xbot_visual.process as _p
+        _p.run = _orig_run
+    except Exception:
+        pass
+    _unhook_web_element()
+    _enabled = False
+    _orig_run = None
+
+
 if __name__ == "__main__":
-    print("element_highlighter: mark() / main() 调用。")
+    print("element_highlighter: mark() / main() / enable() 调用。")
