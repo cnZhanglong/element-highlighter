@@ -325,7 +325,7 @@ def _hook_web_element(duration, fade):
         import xbot_visual.web.element as _we
     except Exception:
         return
-    # 获取类：执行前用 selector 先找元素标 + 执行后用返回值兜底再标一次
+    # 获取类：只执行后标注返回值（不再执行前额外查找，避免性能损耗）
     _get_targets = [
         "get_element",           # 获取元素对象(web)
         "get_all_elements",      # 获取相似元素列表(web)
@@ -339,15 +339,7 @@ def _hook_web_element(duration, fade):
 
         def make_get_wrapper(fn_name, fn):
             def wrapped(**kw):
-                # 执行前：用 selector 先找元素标注
-                try:
-                    browser = kw.get("browser")
-                    selector = kw.get("selector") or kw.get("element")
-                    _resolve_and_mark(browser, selector, duration, fade)
-                except Exception:
-                    pass
                 result = fn(**kw)
-                # 执行后：用返回值兜底再标一次
                 try:
                     browser = kw.get("browser")
                     elems = _extract_elements(result)
@@ -411,18 +403,16 @@ def _hook_web_element(duration, fade):
 def _pre_mark_cross_domain(kw, browser_ref, duration, fade):
     """跨域指令执行前，从 inputs 里拿 xpath + browser 找元素标注。
 
-    所有带 xpath 的跨域指令都执行前标注（find_ele/find_all_ele 也一样）。
-    获取元素信息/属性额外执行后再标一次（因为执行前元素可能还没渲染好）。
+    只有操作类（点击/填写/等待）执行前标注（它们没有返回值）。
+    获取类（find_ele/find_all_ele/process2/process3）只执行后标注（有返回值或元素已确定）。
     """
     try:
         process_name = kw.get("process") or ""
-        # 所有需要操作元素的跨域指令
-        _pre_actions = [
-            "click_by_xpath", "input_by_xpath", "wait_by_xpath",
-            "find_ele", "find_all_ele",
-        ]
-        # 执行后额外标注的：获取元素信息(process2) / 获取元素属性(process3)
+        # 执行前标注的：只有操作类（没返回值，只能执行前标）
+        _pre_actions = ["click_by_xpath", "input_by_xpath", "wait_by_xpath"]
+        # 执行后标注的：获取元素信息(process2) / 获取元素属性(process3)
         _post_actions = ["get_elem_info", ".process2", ".process3"]
+        # 获取类(find_ele/find_all_ele)：process.run 的 _hooked 会自动从返回值提取元素标注，不需要额外处理
         if not any(a in process_name for a in _pre_actions + _post_actions):
             return
         inputs = kw.get("inputs") or {}
@@ -437,15 +427,15 @@ def _pre_mark_cross_domain(kw, browser_ref, duration, fade):
         xpath = inputs.get("xpath") or inputs.get("Xpath") or inputs.get("XPath") or ""
         if not xpath:
             return
-        # 执行前标注：所有指令统一用 find_by_xpath 找元素
-        if any(a in process_name for a in _pre_actions + _post_actions):
+        # 执行前标注：只有操作类
+        if any(a in process_name for a in _pre_actions):
             try:
-                elem = browser.find_by_xpath(xpath, timeout=2)
+                elem = browser.find_by_xpath(xpath, timeout=0.1)
                 if _is_webelement(elem):
                     mark(browser, [elem], duration=duration, fade=fade)
             except Exception:
                 pass
-        # 获取元素信息/属性：执行后再标一次（元素此时已确定渲染好）
+        # 获取元素信息/属性：执行后再标一次
         if any(a in process_name for a in _post_actions):
             kw["_rpa_post_mark"] = {"browser": browser, "xpath": xpath, "duration": duration, "fade": fade}
     except Exception:
