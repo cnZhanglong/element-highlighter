@@ -111,9 +111,9 @@ clear_all(web_browser)            # 立即清除所有方框
 | `fade` | float | `0.6` | 渐隐动画秒数 |
 
 Hook 三个入口：
-- `xbot_visual.process.run` — XPath 跨域自定义指令（返回元素的，执行后标注；点击/填写等无返回值的，执行前用 xpath 先找元素标注）
-- `xbot_visual.web.element` 下的 `get_element` / `get_all_elements` / `get_associated_elements` — 系统自带获取类指令（执行后标注返回值）
-- `xbot_visual.web.element` 下的 `click` / `input` / `input_password` / `select` / `check` / `set_value` / `set_attribute` / `hover` / `drag_to` — 系统自带操作类指令（执行前标注 `element` 参数）
+- `xbot_visual.process.run` — XPath 跨域指令（执行前用 xpath 先找元素标注；获取元素信息/属性额外执行后再标一次）
+- `xbot_visual.web.element` 下的 `get_element` / `get_all_elements` / `get_associated_elements` — 系统自带获取类指令（执行前用 selector 先找元素标注 + 执行后用返回值兜底再标一次）
+- `xbot_visual.web.element` 下的操作类指令 — 执行前标注 `element` 参数
 
 多网页切换时自动从指令参数动态获取当前 `browser`。
 
@@ -142,13 +142,15 @@ Hook 三个入口：
 
 ## 自动标注覆盖的指令
 
-### 系统自带 — 获取类（执行后标注返回值）
+### 系统自带 — 获取类（执行前 + 执行后双保险）
+
+执行前用 selector 先找元素标注，执行后用返回值兜底再标一次。
 
 | 指令 | hook 入口 | 标注时机 |
 |------|-----------|---------|
-| 获取元素对象(web) | `web.element.get_element` | 执行后 |
-| 获取相似元素列表(web) | `web.element.get_all_elements` | 执行后 |
-| 获取关联元素(web) | `web.element.get_associated_elements` | 执行后 |
+| 获取元素对象(web) | `web.element.get_element` | 执行前 + 执行后 |
+| 获取相似元素列表(web) | `web.element.get_all_elements` | 执行前 + 执行后 |
+| 获取关联元素(web) | `web.element.get_associated_elements` | 执行前 + 执行后 |
 
 ### 系统自带 — 操作类（执行前标注 element 参数）
 
@@ -172,22 +174,24 @@ Hook 三个入口：
 | 上传文件(web) | `web.element.upload` | 执行前 |
 | 下载文件(web) | `web.element.download` | 执行前 |
 
-### XPath 跨域 — 获取类（执行后标注返回值）
+### XPath 跨域 — 获取类（执行前 + 执行后双保险）
+
+执行前用 xpath 先找元素标注，执行后用 xpath 再标一次。
 
 | 指令 | hook 入口 | 标注时机 |
 |------|-----------|---------|
-| 获取元素对象-XPath跨域 | `process.run` | 执行后 |
-| 获取相似元素列表-XPath跨域 | `process.run` | 执行后 |
+| 获取元素对象-XPath跨域 | `process.run` | 执行前 + 执行后 |
+| 获取相似元素列表-XPath跨域 | `process.run` | 执行前 + 执行后 |
 
-### XPath 跨域 — 操作类
+### XPath 跨域 — 操作类（执行前用 xpath 先找元素标注）
 
 | 指令 | hook 入口 | 标注时机 |
 |------|-----------|---------|
-| 点击元素-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
-| 填写输入框-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
-| 等待元素-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
-| 获取元素信息-XPath跨域 | `process.run` | 执行后（先 `find_by_xpath` 找元素） |
-| 获取元素属性-XPath跨域 | `process.run` | 执行后（先 `find_by_xpath` 找元素） |
+| 点击元素-XPath跨域 | `process.run` | 执行前 |
+| 填写输入框-XPath跨域 | `process.run` | 执行前 |
+| 等待元素-XPath跨域 | `process.run` | 执行前 |
+| 获取元素信息-XPath跨域 | `process.run` | 执行前 + 执行后 |
+| 获取元素属性-XPath跨域 | `process.run` | 执行前 + 执行后 |
 
 ## 技术细节
 
@@ -197,7 +201,7 @@ Hook 三个入口：
 - **防闭包**：旧框渐隐的 `onfinish` 用 IIFE 锁定每次迭代的元素引用
 - **自毁定时器**：每个方框 `setTimeout(duration)` 自毁，被新标注取代时 `clearTimeout` 取消
 - **Hook 机制**：`enable()` 同时 patch `xbot_visual.process.run` 和 `xbot_visual.web.element` 下的函数；`disable()` 恢复
-- **操作类指令标注**：点击/填写等无返回值的指令，执行前从参数里拿 `element`（系统自带）或 `xpath`（跨域）标注
+- **双保险标注**：所有指令统一执行前先找元素标注；获取类指令（获取元素对象/相似元素列表/元素信息/属性）额外执行后再标一次兜底
 - **Selector 支持**：系统自带指令的 `element` 参数可能是 Selector 对象（不是 WebElement），用 `browser.find(selector)` 自动解析后再标注
 - **跨域指令参数兼容**：`iframe_instance` / `iframe对象` / `IFrame对象` 三种参数名，`xpath` / `Xpath` / `XPath` 三种大小写都兼容
 
