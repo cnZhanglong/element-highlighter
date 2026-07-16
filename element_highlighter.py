@@ -102,6 +102,45 @@ _REVEAL_JS = """(elem, cfgJson) => {
     }
 }"""
 
+_REVEAL_MULTI_JS = """(elems, cfgJson) => {
+    var cfgs = (typeof cfgJson === 'string') ? JSON.parse(cfgJson) : cfgJson;
+    for(var i=0;i<elems.length;i++){
+        var elem = elems[i], c = cfgs[i] || cfgs[0];
+        (function(el, cfg){
+            function _doReveal(attempt){
+                var r = el.getBoundingClientRect();
+                if(r.width===0&&r.height===0){
+                    var delays = [16, 60, 120];
+                    if(attempt < delays.length){
+                        setTimeout(function(){_doReveal(attempt+1);}, delays[attempt]);
+                        return;
+                    }
+                    return;
+                }
+                var box = document.createElement('div');
+                box.className='rpa-hl-box';
+                box.style.left=r.left+'px'; box.style.top=r.top+'px';
+                box.style.width=Math.max(r.width,3)+'px'; box.style.height=Math.max(r.height,3)+'px';
+                box.style.borderColor=cfg.color;
+                box.style.background=cfg.bg;
+                box.style.opacity='1';
+                box._el=el;
+                document.getElementById('rpa_hl_layer').appendChild(box);
+                window._rpaBoxes.push(box);
+                box._timer = setTimeout(function(){
+                    box.animate([{opacity:1},{opacity:0}],{duration:(cfg.fade||0.6)*1000,fill:'forwards'}).onfinish=function(){
+                        if(box.parentNode)box.remove();
+                    };
+                    setTimeout(function(){
+                        var j=window._rpaBoxes.indexOf(box);if(j>=0)window._rpaBoxes.splice(j,1);
+                    },(cfg.fade||0.6)*1000+50);
+                },(cfg.duration||3)*1000);
+            }
+            _doReveal(0);
+        })(elem, c);
+    }
+}"""
+
 _FADE_OLD_JS = """(elem, fadeSec) => {
     var boxes = window._rpaBoxes || [];
     window._rpaBoxes = [];
@@ -135,9 +174,15 @@ def _color_rgba(hex_color, alpha):
     return f"rgba({r},{g},{b},{alpha})"
 
 
+_layer_initialized = {}
+
 def _ensure_layer(anchor):
+    bid = id(anchor)
+    if _layer_initialized.get(bid):
+        return
     try:
         anchor.execute_javascript(_INIT_JS)
+        _layer_initialized[bid] = True
     except Exception:
         pass
 
@@ -161,16 +206,26 @@ def mark(web_browser, elements, duration=3.0, fade=0.6):
     except Exception:
         pass
 
-    # 2) 画新框
-    for e in elems:
+    # 2) 画新框：单个元素直接调，多个元素合并一次调用减少 IPC
+    if len(elems) == 1:
         cfg = {
             "color": color, "bg": _color_rgba(color, 0.40),
             "duration": duration, "fade": fade,
         }
         try:
-            e.execute_javascript(_REVEAL_JS, json.dumps(cfg, ensure_ascii=False))
+            elems[0].execute_javascript(_REVEAL_JS, json.dumps(cfg, ensure_ascii=False))
         except Exception:
-            continue
+            pass
+    else:
+        # 多元素：用 browser 一次执行所有元素的标注
+        cfgs = [{
+            "color": color, "bg": _color_rgba(color, 0.40),
+            "duration": duration, "fade": fade,
+        }] * len(elems)
+        try:
+            anchor.execute_javascript(_REVEAL_MULTI_JS, json.dumps(cfgs, ensure_ascii=False), elems)
+        except Exception:
+            pass
 
 
 def clear_all(web_browser=None, anchor=None):
@@ -244,10 +299,9 @@ def enable(web_page=None, duration=3.0, fade=0.6):
         _pre_mark_cross_domain(kw, _browser_ref, duration, fade)
         result = _orig_run(**kw)
         try:
-            # 每次指令动态拿当前 browser（支持多网页切换）：
-            #   ① 指令参数里的 browser（最准——当前指令操作哪个网页就是哪个）
-            #   ② 返回值是 WebBrowser（"获取已打开的网页对象"指令）→ 更新缓存
-            #   ③ 元素自己作 anchor（兜底）
+            # 快速跳过：None / 基础类型不需要处理
+            if result is None or isinstance(result, (bool, int, float, str)):
+                return result
             current_browser = kw.get("browser") or _browser_ref[0]
             if _is_webbrowser(result):
                 _browser_ref[0] = result
@@ -275,7 +329,7 @@ def enable(web_page=None, duration=3.0, fade=0.6):
             post = kw.pop("_rpa_post_mark", None)
             if post:
                 try:
-                    elem = post["browser"].find_by_xpath(post["xpath"], timeout=2)
+                    elem = post["browser"].find_by_xpath(post["xpath"], timeout=0.1)
                     if _is_webelement(elem):
                         mark(post["browser"], [elem], duration=post["duration"], fade=post["fade"])
                 except Exception:
@@ -299,7 +353,7 @@ _web_elem_origs = {}
 def _resolve_and_mark(browser, elem, duration, fade):
     """把 element 参数解析成 WebElement 并标注。
 
-    支持：WebElement 直接标；Selector 用 browser.find() 解析后标；字符串 xpath 用 find_by_xpath 找。
+    支持：WebElement 直接标；Selector 用 browser.find() 解析后标（短 timeout 防卡）。
     """
     if elem is None:
         return
@@ -307,12 +361,12 @@ def _resolve_and_mark(browser, elem, duration, fade):
     if _is_webelement(elem):
         mark(browser or elem, [elem], duration=duration, fade=fade)
         return
-    # Selector 对象：用 browser.find 解析
+    # Selector 对象：用 browser.find 解析（短 timeout 避免性能损耗）
     if browser is not None:
         cls_name = type(elem).__name__
         if cls_name in ("Selector", "TableSelector") or isinstance(elem, str):
             try:
-                resolved = browser.find(elem)
+                resolved = browser.find(elem, timeout=0.1)
                 if _is_webelement(resolved):
                     mark(browser, [resolved], duration=duration, fade=fade)
             except Exception:
