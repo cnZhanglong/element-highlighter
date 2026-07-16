@@ -18,7 +18,7 @@
 无需手动下载。在流程第一个「执行 Python 代码」指令里粘贴以下代码，会自动检测并下载 `element_highlighter.py` 到 `xbot_extensions` 目录：
 
 ```python
-import os, sys, urllib.request
+import os, sys
 
 # 找 xbot_extensions 目录
 ext_dir = None
@@ -32,20 +32,33 @@ if ext_dir and ext_dir not in sys.path:
     sys.path.insert(0, ext_dir)
 
 target = os.path.join(ext_dir or ".", "element_highlighter.py")
-url = "https://raw.githubusercontent.com/cnZhanglong/element-highlighter/main/element_highlighter.py"
 
-# 不存在就下载
+# 不存在就下载（容错：下载失败也不影响流程）
 if not os.path.exists(target):
-    urllib.request.urlretrieve(url, target)
+    try:
+        import urllib.request
+        urls = [
+            "https://raw.githubusercontent.com/cnZhanglong/element-highlighter/main/element_highlighter.py",
+            "https://ghproxy.com/https://raw.githubusercontent.com/cnZhanglong/element-highlighter/main/element_highlighter.py",
+        ]
+        for u in urls:
+            try:
+                urllib.request.urlretrieve(u, target)
+                break
+            except Exception:
+                continue
+    except Exception:
+        pass
 
-from element_highlighter import enable
-enable()
+# 尝试启用自动标注（文件不存在或 import 失败都不影响流程）
+try:
+    from element_highlighter import enable
+    enable()
+except Exception:
+    pass
 ```
 
-> 如果 `raw.githubusercontent.com` 连不上，把 `url` 换成镜像：
-> ```python
-> url = "https://ghproxy.com/https://raw.githubusercontent.com/cnZhanglong/element-highlighter/main/element_highlighter.py"
-> ```
+> 代码已内置双地址容错：先试 GitHub，超时自动切 ghproxy 镜像。两个都连不上也不影响流程，只是没有自动标注。
 
 ## 用法
 
