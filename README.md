@@ -110,10 +110,11 @@ clear_all(web_browser)            # 立即清除所有方框
 | `duration` | float | `3.0` | 方框保持显示秒数 |
 | `fade` | float | `0.6` | 渐隐动画秒数 |
 
-Hook 三个入口：
-- `xbot_visual.process.run` — XPath 跨域指令（执行前用 xpath 先找元素标注；获取元素信息/属性额外执行后再标一次）
-- `xbot_visual.web.element` 下的 `get_element` / `get_all_elements` / `get_associated_elements` — 系统自带获取类指令（执行前用 selector 先找元素标注 + 执行后用返回值兜底再标一次）
-- `xbot_visual.web.element` 下的操作类指令 — 执行前标注 `element` 参数
+Hook 两个入口：
+- `xbot_visual.process.run` — XPath 跨域指令
+- `xbot_visual.web.element` 下的函数 — 系统自带指令
+
+所有指令统一执行前标注（系统自带用 selector/element 参数，跨域用 xpath 参数先 `find_by_xpath` 找元素）。部分指令额外执行后再标一次兜底。
 
 多网页切换时自动从指令参数动态获取当前 `browser`。
 
@@ -142,56 +143,42 @@ Hook 三个入口：
 
 ## 自动标注覆盖的指令
 
-### 系统自带 — 获取类（执行前 + 执行后双保险）
+所有指令统一执行前标注；标注时机带"+执行后"的表示额外执行后再标一次兜底。
 
-执行前用 selector 先找元素标注，执行后用返回值兜底再标一次。
+### 系统自带指令
 
-| 指令 | hook 入口 | 标注时机 |
-|------|-----------|---------|
-| 获取元素对象(web) | `web.element.get_element` | 执行前 + 执行后 |
-| 获取相似元素列表(web) | `web.element.get_all_elements` | 执行前 + 执行后 |
-| 获取关联元素(web) | `web.element.get_associated_elements` | 执行前 + 执行后 |
+| 指令 | 标注时机 |
+|------|---------|
+| 获取元素对象(web) | 执行前 + 执行后 |
+| 获取相似元素列表(web) | 执行前 + 执行后 |
+| 获取关联元素(web) | 执行前 + 执行后 |
+| 点击元素(web) | 执行前 |
+| 填写输入框(web) | 执行前 |
+| 填写密码框(web) | 执行前 |
+| 设置下拉框(web) | 执行前 |
+| 设置复选框(web) | 执行前 |
+| 设置元素值(web) | 执行前 |
+| 设置元素属性(web) | 执行前 |
+| 悬停元素(web) | 执行前 |
+| 拖拽元素(web) | 执行前 |
+| 等待元素(web) | 执行前 + 执行后 |
+| 获取元素信息(web) | 执行前 |
+| 获取元素位置(web) | 执行前 |
+| 元素截图(web) | 执行前 |
+| 上传文件(web) | 执行前 |
+| 下载文件(web) | 执行前 |
 
-### 系统自带 — 操作类（执行前标注 element 参数）
+### XPath 跨域指令
 
-支持 WebElement 和 Selector 两种参数类型（Selector 会自动用 `browser.find()` 解析）。
-
-| 指令 | hook 入口 | 标注时机 |
-|------|-----------|---------|
-| 点击元素(web) | `web.element.click` | 执行前 |
-| 填写输入框(web) | `web.element.input` | 执行前 |
-| 填写密码框(web) | `web.element.input_password` | 执行前 |
-| 设置下拉框(web) | `web.element.select` | 执行前 |
-| 设置复选框(web) | `web.element.check` | 执行前 |
-| 设置元素值(web) | `web.element.set_value` | 执行前 |
-| 设置元素属性(web) | `web.element.set_attribute` | 执行前 |
-| 悬停元素(web) | `web.element.hover` | 执行前 |
-| 拖拽元素(web) | `web.element.drag_to` | 执行前 |
-| 等待元素(web) | `web.element.wait` | 执行前 + 执行后兜底 |
-| 获取元素信息(web) | `web.element.get_details` | 执行前 |
-| 获取元素位置(web) | `web.element.get_bounding` | 执行前 |
-| 元素截图(web) | `web.element.screenshot` | 执行前 |
-| 上传文件(web) | `web.element.upload` | 执行前 |
-| 下载文件(web) | `web.element.download` | 执行前 |
-
-### XPath 跨域 — 获取类（执行前 + 执行后双保险）
-
-执行前用 xpath 先找元素标注，执行后用 xpath 再标一次。
-
-| 指令 | hook 入口 | 标注时机 |
-|------|-----------|---------|
-| 获取元素对象-XPath跨域 | `process.run` | 执行前 + 执行后 |
-| 获取相似元素列表-XPath跨域 | `process.run` | 执行前 + 执行后 |
-
-### XPath 跨域 — 操作类（执行前用 xpath 先找元素标注）
-
-| 指令 | hook 入口 | 标注时机 |
-|------|-----------|---------|
-| 点击元素-XPath跨域 | `process.run` | 执行前 |
-| 填写输入框-XPath跨域 | `process.run` | 执行前 |
-| 等待元素-XPath跨域 | `process.run` | 执行前 |
-| 获取元素信息-XPath跨域 | `process.run` | 执行前 + 执行后 |
-| 获取元素属性-XPath跨域 | `process.run` | 执行前 + 执行后 |
+| 指令 | 标注时机 |
+|------|---------|
+| 获取元素对象-XPath跨域 | 执行前 |
+| 获取相似元素列表-XPath跨域 | 执行前 |
+| 点击元素-XPath跨域 | 执行前 |
+| 填写输入框-XPath跨域 | 执行前 |
+| 等待元素-XPath跨域 | 执行前 |
+| 获取元素信息-XPath跨域 | 执行前 + 执行后 |
+| 获取元素属性-XPath跨域 | 执行前 + 执行后 |
 
 ## 技术细节
 
