@@ -139,6 +139,8 @@ Hook 三个入口：
 
 ### 系统自带 — 操作类（执行前标注 element 参数）
 
+支持 WebElement 和 Selector 两种参数类型（Selector 会自动用 `browser.find()` 解析）。
+
 | 指令 | hook 入口 | 标注时机 |
 |------|-----------|---------|
 | 点击元素(web) | `web.element.click` | 执行前 |
@@ -150,6 +152,12 @@ Hook 三个入口：
 | 设置元素属性(web) | `web.element.set_attribute` | 执行前 |
 | 悬停元素(web) | `web.element.hover` | 执行前 |
 | 拖拽元素(web) | `web.element.drag_to` | 执行前 |
+| 等待元素(web) | `web.element.wait` | 执行前 + 执行后兜底 |
+| 获取元素信息(web) | `web.element.get_details` | 执行前 |
+| 获取元素位置(web) | `web.element.get_bounding` | 执行前 |
+| 元素截图(web) | `web.element.screenshot` | 执行前 |
+| 上传文件(web) | `web.element.upload` | 执行前 |
+| 下载文件(web) | `web.element.download` | 执行前 |
 
 ### XPath 跨域 — 获取类（执行后标注返回值）
 
@@ -158,12 +166,15 @@ Hook 三个入口：
 | 获取元素对象-XPath跨域 | `process.run` | 执行后 |
 | 获取相似元素列表-XPath跨域 | `process.run` | 执行后 |
 
-### XPath 跨域 — 操作类（执行前用 xpath 先找元素标注）
+### XPath 跨域 — 操作类
 
 | 指令 | hook 入口 | 标注时机 |
 |------|-----------|---------|
 | 点击元素-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
 | 填写输入框-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
+| 等待元素-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
+| 获取元素信息-XPath跨域 | `process.run` | 执行后（先 `find_by_xpath` 找元素） |
+| 获取元素属性-XPath跨域 | `process.run` | 执行后（先 `find_by_xpath` 找元素） |
 
 ## 技术细节
 
@@ -173,7 +184,9 @@ Hook 三个入口：
 - **防闭包**：旧框渐隐的 `onfinish` 用 IIFE 锁定每次迭代的元素引用
 - **自毁定时器**：每个方框 `setTimeout(duration)` 自毁，被新标注取代时 `clearTimeout` 取消
 - **Hook 机制**：`enable()` 同时 patch `xbot_visual.process.run` 和 `xbot_visual.web.element` 下的函数；`disable()` 恢复
-- **操作类指令标注**：点击/填写等无返回值的指令，执行前从参数里拿 `element`（系统自带）或 `xpath`（跨域）标注；跨域指令执行前先用 `browser.find_by_xpath` 查找元素
+- **操作类指令标注**：点击/填写等无返回值的指令，执行前从参数里拿 `element`（系统自带）或 `xpath`（跨域）标注
+- **Selector 支持**：系统自带指令的 `element` 参数可能是 Selector 对象（不是 WebElement），用 `browser.find(selector)` 自动解析后再标注
+- **跨域指令参数兼容**：`iframe_instance` / `iframe对象` / `IFrame对象` 三种参数名，`xpath` / `Xpath` / `XPath` 三种大小写都兼容
 
 ## 配色
 
