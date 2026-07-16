@@ -240,6 +240,8 @@ def enable(web_page=None, duration=3.0, fade=0.6):
     _browser_ref = [web_page]
 
     def _hooked(**kw):
+        # 执行前：跨域点击/填写指令从 inputs 里拿 xpath + browser，先找元素标注
+        _pre_mark_cross_domain(kw, _browser_ref, duration, fade)
         result = _orig_run(**kw)
         try:
             # 每次指令动态拿当前 browser（支持多网页切换）：
@@ -258,6 +260,14 @@ def enable(web_page=None, duration=3.0, fade=0.6):
                         if current_browser is None:
                             current_browser = r
                         break
+            # 从 inputs 里拿 iframe_instance 更新 browser 缓存
+            inputs = kw.get("inputs") or {}
+            if isinstance(inputs, dict):
+                iframe_inst = inputs.get("iframe_instance") or inputs.get("iframe对象")
+                if _is_webbrowser(iframe_inst):
+                    _browser_ref[0] = iframe_inst
+                    if current_browser is None:
+                        current_browser = iframe_inst
             elems = _extract_elements(result)
             if elems:
                 mark(current_browser or elems[0], elems, duration=duration, fade=fade)
@@ -278,18 +288,18 @@ _web_elem_origs = {}
 
 
 def _hook_web_element(duration, fade):
-    """hook xbot_visual.web.element 下返回元素的函数。"""
+    """hook xbot_visual.web.element 下的函数。"""
     try:
         import xbot_visual.web.element as _we
     except Exception:
         return
-    # 这些函数返回 WebElement 或 [WebElement]
-    _targets = [
+    # 返回元素的：执行后标注返回值
+    _get_targets = [
         "get_element",           # 获取元素对象(web)
         "get_all_elements",      # 获取相似元素列表(web)
         "get_associated_elements",  # 获取关联元素(web)
     ]
-    for name in _targets:
+    for name in _get_targets:
         orig = getattr(_we, name, None)
         if orig is None or name in _web_elem_origs:
             continue
@@ -309,6 +319,66 @@ def _hook_web_element(duration, fade):
             return wrapped
 
         setattr(_we, name, make_wrapper(name, orig))
+
+    # 操作元素的：执行前标注 element 参数
+    _action_targets = [
+        "click",           # 点击元素(web)
+        "input",           # 填写输入框(web)
+        "input_password",  # 填写密码框(web)
+        "select",          # 设置下拉框(web)
+        "check",           # 设置复选框(web)
+        "set_value",       # 设置元素值(web)
+        "set_attribute",   # 设置元素属性(web)
+        "hover",           # 悬停元素(web)
+        "drag_to",         # 拖拽元素(web)
+    ]
+    for name in _action_targets:
+        orig = getattr(_we, name, None)
+        if orig is None or name in _web_elem_origs:
+            continue
+        _web_elem_origs[name] = orig
+
+        def make_pre_wrapper(fn_name, fn):
+            def wrapped(**kw):
+                # 执行前标注
+                try:
+                    browser = kw.get("browser")
+                    elem = kw.get("element")
+                    if _is_webelement(elem):
+                        mark(browser or elem, [elem], duration=duration, fade=fade)
+                except Exception:
+                    pass
+                return fn(**kw)
+            return wrapped
+
+        setattr(_we, name, make_pre_wrapper(name, orig))
+
+
+def _pre_mark_cross_domain(kw, browser_ref, duration, fade):
+    """跨域点击/填写指令执行前，从 inputs 里拿 xpath + browser 找元素标注。"""
+    try:
+        process_name = kw.get("process") or ""
+        # 只处理跨域点击/填写
+        if "click_by_xpath" not in process_name and "input_by_xpath" not in process_name:
+            return
+        inputs = kw.get("inputs") or {}
+        if not isinstance(inputs, dict):
+            return
+        browser = inputs.get("iframe_instance") or inputs.get("iframe对象") or browser_ref[0]
+        if not _is_webbrowser(browser):
+            return
+        xpath = inputs.get("xpath") or inputs.get("Xpath") or ""
+        if not xpath:
+            return
+        # 尝试用 browser.find_by_xpath 找元素
+        try:
+            elem = browser.find_by_xpath(xpath, timeout=2)
+            if _is_webelement(elem):
+                mark(browser, [elem], duration=duration, fade=fade)
+        except Exception:
+            pass  # 找不到就算了，不影响主流程
+    except Exception:
+        pass
 
 
 def _unhook_web_element():
