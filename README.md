@@ -15,24 +15,52 @@
 
 ## 安装
 
-把 `element_highlighter.py` 放到影刀项目的 `xbot_extensions` 目录下（或任意可 import 的路径）。
+无需手动下载。在流程第一个「执行 Python 代码」指令里粘贴以下代码，会自动检测并下载 `element_highlighter.py` 到 `xbot_extensions` 目录：
+
+```python
+import os, sys, urllib.request
+
+# 找 xbot_extensions 目录
+ext_dir = None
+for p in sys.path:
+    c = os.path.join(p, "xbot_extensions")
+    if os.path.isdir(c):
+        ext_dir = c
+        break
+
+if ext_dir and ext_dir not in sys.path:
+    sys.path.insert(0, ext_dir)
+
+target = os.path.join(ext_dir or ".", "element_highlighter.py")
+url = "https://raw.githubusercontent.com/cnZhanglong/element-highlighter/main/element_highlighter.py"
+
+# 不存在就下载
+if not os.path.exists(target):
+    urllib.request.urlretrieve(url, target)
+
+from element_highlighter import enable
+enable()
+```
+
+> 如果 `raw.githubusercontent.com` 连不上，把 `url` 换成镜像：
+> ```python
+> url = "https://ghproxy.com/https://raw.githubusercontent.com/cnZhanglong/element-highlighter/main/element_highlighter.py"
+> ```
 
 ## 用法
 
 ### 方式一：自动标注（推荐）
 
-流程开头调一次 `enable()`，之后所有返回元素的指令都会自动标注：
+流程开头用「执行 Python 代码」指令粘贴上面的安装代码即可，之后所有返回元素的指令都会自动标注：
 
-```python
-from element_highlighter import enable
-enable()          # web_page 不用传，自动从指令捕获
-
-# 之后正常拖可视化指令，元素自动标注：
-# 获取已打开的网页对象 → 自动捕获 web_page
-# 获取元素对象(web)    → 自动标注
-# 获取相似元素列表(web) → 自动标注
-# 获取关联元素(web)    → 自动标注
-# XPath跨域指令       → 自动标注
+```
+获取已打开的网页对象 → 自动捕获 web_page
+获取元素对象(web)    → 自动标注
+获取相似元素列表(web) → 自动标注
+获取关联元素(web)    → 自动标注
+点击元素(web)        → 执行前自动标注
+填写输入框(web)      → 执行前自动标注
+XPath跨域指令       → 自动标注
 ```
 
 不想标注了：
@@ -69,9 +97,10 @@ clear_all(web_browser)            # 立即清除所有方框
 | `duration` | float | `3.0` | 方框保持显示秒数 |
 | `fade` | float | `0.6` | 渐隐动画秒数 |
 
-Hook 两个入口：
-- `xbot_visual.process.run` — XPath 跨域自定义指令
-- `xbot_visual.web.element` 下的 `get_element` / `get_all_elements` / `get_associated_elements` — 系统自带指令
+Hook 三个入口：
+- `xbot_visual.process.run` — XPath 跨域自定义指令（返回元素的，执行后标注；点击/填写等无返回值的，执行前用 xpath 先找元素标注）
+- `xbot_visual.web.element` 下的 `get_element` / `get_all_elements` / `get_associated_elements` — 系统自带获取类指令（执行后标注返回值）
+- `xbot_visual.web.element` 下的 `click` / `input` / `input_password` / `select` / `check` / `set_value` / `set_attribute` / `hover` / `drag_to` — 系统自带操作类指令（执行前标注 `element` 参数）
 
 多网页切换时自动从指令参数动态获取当前 `browser`。
 
@@ -100,18 +129,41 @@ Hook 两个入口：
 
 ## 自动标注覆盖的指令
 
-| 指令 | hook 入口 |
-|------|-----------|
-| 获取元素对象(web) | `web.element.get_element` |
-| 获取相似元素列表(web) | `web.element.get_all_elements` |
-| 获取关联元素(web) | `web.element.get_associated_elements` |
-| 获取元素对象-XPath跨域 | `process.run` |
-| 获取相似元素列表-XPath跨域 | `process.run` |
-| 点击元素-XPath跨域 | `process.run` |
-| 填写输入框-XPath跨域 | `process.run` |
-| 等待元素-XPath跨域 | `process.run` |
-| 获取元素信息-XPath跨域 | `process.run` |
-| 获取元素属性-XPath跨域 | `process.run` |
+### 系统自带 — 获取类（执行后标注返回值）
+
+| 指令 | hook 入口 | 标注时机 |
+|------|-----------|---------|
+| 获取元素对象(web) | `web.element.get_element` | 执行后 |
+| 获取相似元素列表(web) | `web.element.get_all_elements` | 执行后 |
+| 获取关联元素(web) | `web.element.get_associated_elements` | 执行后 |
+
+### 系统自带 — 操作类（执行前标注 element 参数）
+
+| 指令 | hook 入口 | 标注时机 |
+|------|-----------|---------|
+| 点击元素(web) | `web.element.click` | 执行前 |
+| 填写输入框(web) | `web.element.input` | 执行前 |
+| 填写密码框(web) | `web.element.input_password` | 执行前 |
+| 设置下拉框(web) | `web.element.select` | 执行前 |
+| 设置复选框(web) | `web.element.check` | 执行前 |
+| 设置元素值(web) | `web.element.set_value` | 执行前 |
+| 设置元素属性(web) | `web.element.set_attribute` | 执行前 |
+| 悬停元素(web) | `web.element.hover` | 执行前 |
+| 拖拽元素(web) | `web.element.drag_to` | 执行前 |
+
+### XPath 跨域 — 获取类（执行后标注返回值）
+
+| 指令 | hook 入口 | 标注时机 |
+|------|-----------|---------|
+| 获取元素对象-XPath跨域 | `process.run` | 执行后 |
+| 获取相似元素列表-XPath跨域 | `process.run` | 执行后 |
+
+### XPath 跨域 — 操作类（执行前用 xpath 先找元素标注）
+
+| 指令 | hook 入口 | 标注时机 |
+|------|-----------|---------|
+| 点击元素-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
+| 填写输入框-XPath跨域 | `process.run` | 执行前（先 `find_by_xpath` 找元素） |
 
 ## 技术细节
 
@@ -121,6 +173,7 @@ Hook 两个入口：
 - **防闭包**：旧框渐隐的 `onfinish` 用 IIFE 锁定每次迭代的元素引用
 - **自毁定时器**：每个方框 `setTimeout(duration)` 自毁，被新标注取代时 `clearTimeout` 取消
 - **Hook 机制**：`enable()` 同时 patch `xbot_visual.process.run` 和 `xbot_visual.web.element` 下的函数；`disable()` 恢复
+- **操作类指令标注**：点击/填写等无返回值的指令，执行前从参数里拿 `element`（系统自带）或 `xpath`（跨域）标注；跨域指令执行前先用 `browser.find_by_xpath` 查找元素
 
 ## 配色
 
